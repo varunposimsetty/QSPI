@@ -1,2 +1,2 @@
 # QSPI
-Quad Serial Peripheral Interface 
+RTL Implementation of the Quad Serial Peripheral Interface Protocol.

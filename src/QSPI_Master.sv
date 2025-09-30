@@ -3,6 +3,7 @@ module QSPI_Master
 (#parameter DATA_WIDTH = 8,
             CPOL = 1,
             CPHA = 0,
+            CLOCK_DIVIDER = 10,
             ADDR_WIDTH = 24,
             DUMMY_CYCLES = 10
 
@@ -23,24 +24,38 @@ module QSPI_Master
 logic[DATA_WIDTH-1:0] data_buffer = {DATA_WIDTH{1'b0}};
 enum {idle, transmit,finish} t_write_state;
 t_write_state current_state = idle;
-int i = 0;
-logic [3:0] temp_io = 4{1'b0};
-
+int i,clk_count = 0;
+logic divided_clk = 0;
+logic [3:0] temp_io = {4{1'b0}};
+logic [3:0] enable_io = {4{1'b0}};
 
 always_ff @(posedge sys_clk, negedge nrst)
+    if (~nrst) begin 
+        clk_count <= 0;
+        divided_clk <= 0;
+    end else begin 
+        if (clk_count == CLOCK_DIVIDER-1) begin 
+            divided_clk <= ~divided_clk;
+            clk_count <= 0;
+        end else begin 
+            clk_count <= clk_count + 1;
+        end 
+    end 
+
+
+always_ff @(posedge divided_clk, negedge nrst)
     if(~nrst) begin 
         chip_select <= 1'b1;
-        sclk <= 1'b0;
         data_buffer <= 0;
         i <= 0;
         temp_io <= {4{1'b0}};
+        enable_io <= {4{1'b0}};
         current_state <= idle;
         data_buffer <= 0;
     end else begin 
         if(current_state == idle) begin 
             if(trigger_transmission) begin 
                 chip_select <= '0';
-                sclk <= sys_clk;
                 if(operation) begin
                     data_buffer <= wr_data;
                     current_state <= transmit;
@@ -53,7 +68,9 @@ always_ff @(posedge sys_clk, negedge nrst)
             end 
         end else if (current_state == transmit) begin
             if(sel_mode == 2'b00) begin
+                enable_io <= 4'b0011;
                 if (operation) begin 
+                    enable_io <= 4'b0010;
                     case (1'b1) 
                             (i >= 0 && i < DATA_WIDTH-1): begin 
                                 temp_io[1] <= data_buffer[i];
@@ -64,7 +81,6 @@ always_ff @(posedge sys_clk, negedge nrst)
                                 i <= 0;
                                 current_state <= finish;
                                 chip_select <= 1;
-                                sclk <= 0;
                             end 
                             default : begin 
                                // NULL
@@ -73,9 +89,25 @@ always_ff @(posedge sys_clk, negedge nrst)
 
                 end else begin 
                     // OPERATION FOR READ
-
+                    enable_io <= 4'b0001;
+                    case (1'b1)
+                        (i >= 0 && i < DATA_WIDTH-1): begin 
+                            data_buffer[i] <= IO[0];
+                            i <= i + 1;
+                        end 
+                        (i == DATA_WIDTH-1) : begin 
+                            data_buffer[i] <= IO[0];
+                            i <= 0;
+                            current_state <= finish;
+                            chip_select <= 1;
+                        end
+                        default : begin 
+                            // NULL
+                        end 
+                    endcase
                 end 
             end else if(sel_mode == 2'b01) begin 
+                enable_io <= 4'b0011;
                 if (operation) begin 
                     case (1'b1) 
                             (i >= 0 && i < DATA_WIDTH-2): begin 
@@ -89,7 +121,6 @@ always_ff @(posedge sys_clk, negedge nrst)
                                 i <= 0;
                                 current_state <= finish;
                                 chip_select <= 1;
-                                sclk <= 0;
                             end 
                             default : begin 
                                // NULL
@@ -97,8 +128,26 @@ always_ff @(posedge sys_clk, negedge nrst)
                     endcase
                 end else begin 
                     // OPERATION FOR READ.
+                    case (1'b1)
+                        (i >= 0 && i < DATA_WIDTH-1): begin 
+                            data_buffer[i] <= IO[0];
+                            data_buffer[i+1] <= IO[1];
+                            i <= i + 2;
+                        end 
+                        (i == DATA_WIDTH-2) : begin 
+                            data_buffer[i] <= IO[0];
+                            data_buffer[i+1] <= IO[1];
+                            i <= 0;
+                            current_state <= finish;
+                            chip_select <= 1;
+                        end
+                        default : begin 
+                            // NULL
+                        end 
+                    endcase
                 end 
             end else begin 
+                enable_io <= {4{1'b1}};
                 if (operation) begin 
                         case (1'b1) 
                             (i >= 0 && i < DATA_WIDTH-4): begin 
@@ -106,7 +155,7 @@ always_ff @(posedge sys_clk, negedge nrst)
                                 temp_io[1] <= data_buffer[i+1];
                                 temp_io[2] <= data_buffer[i+2];
                                 temp_io[3] <= data_buffer[i+3];
-                                i <= i + 2;
+                                i <= i + 4;
                             end 
                             (i == DATA_WIDTH-4) : begin 
                                 temp_io[0] <= data_buffer[i];
@@ -116,7 +165,6 @@ always_ff @(posedge sys_clk, negedge nrst)
                                 i <= 0;
                                 current_state <= finish;
                                 chip_select <= 1;
-                                sclk <= 0;
                             end 
                             default : begin 
                                // NULL
@@ -124,10 +172,39 @@ always_ff @(posedge sys_clk, negedge nrst)
                         endcase
                 end else begin 
                     // OPERATION FOR READ.
+                    case (1'b1)
+                        (i >= 0 && i < DATA_WIDTH-1): begin 
+                            data_buffer[i] <= IO[0];
+                            data_buffer[i+1] <= IO[1];
+                            data_buffer[i+2] <= IO[2];
+                            data_buffer[i+3] <= IO[3];
+                            i <= i + 4;
+                        end 
+                        (i == DATA_WIDTH-4) : begin 
+                            data_buffer[i] <= IO[0];
+                            data_buffer[i+1] <= IO[1];
+                            data_buffer[i+2] <= IO[2];
+                            data_buffer[i+3] <= IO[3];
+                            i <= 0;
+                            current_state <= finish;
+                            chip_select <= 1;
+                        end
+                        default : begin 
+                            // NULL
+                        end 
+                    endcase
                 end 
             end 
         end else if(current_state == finish) begin
+            if(~operation) begin 
+                rd_data <= data_buffer;
+            end 
             current_state <= idle;
         end 
     end 
+    assign sclk = chip_select ? 1'b0 : divided_clk;
+    assign IO[0] = enable_io[0] ? temp_io[0] : 1'bz;
+    assign IO[1] = enable_io[1] ? temp_io[1] : 1'bz;
+    assign IO[2] = enable_io[2] ? temp_io[2] : 1'bz;
+    assign IO[3] = enable_io[3] ? temp_io[3] : 1'bz;
 endmodule

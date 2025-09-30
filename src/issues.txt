@@ -1,90 +1,91 @@
-1. Major Conceptual Issues
+Alright 👍 — let’s do a **full checklist** of the issues in your current QSPI\_Master so you can fix them one by one. I’ll keep it clear and structured:
 
-Looping inside always_ff
+---
 
-You are using for loops inside a single clocked always_ff block to transmit all bits in one pass.
-In synthesizable RTL, these loops don’t iterate per clock cycle — they happen in zero simulation time and do not generate sequential shifting hardware in the way you probably intend.
-For bit-by-bit transmission, you’ll need a bit counter that increments each clock cycle and sends one set of bits per SCK edge, not all at once.
-Clock handling
+## 🔹 Functional Issues
 
-You wrote sclk <= sys_clk; which just connects sclk to the system clock.
-In an SPI/QSPI master, sclk should be generated according to CPOL/CPHA using a divider or edge toggling logic — not directly assigned from sys_clk.
-Without proper clock generation, timing will not meet protocol requirements for the connected device.
-Tri-State handling for IO lines
+1. **Single-bit SPI mapping is flipped**
 
-You have temp_io but you never actually assign IO with high-Z when needed for read operations.
-In real QSPI, during certain phases (like read data), the master must release IO lines so the slave can drive them.
-You need explicit assign IO[x] = drive_enable[x] ? temp_io[x] : 1'bz; type connectivity so the external pins behave correctly.
-State machine bit progression
+   * Correct convention:
 
-You never increment or track the current bit index across cycles in your FSM — instead, the for loop tries to do it all at once.
-This means temp_io will end up with only the last iteration’s values when synthesis maps it.
-A proper FSM will have:
-Load data
-Shift/send one chunk per clock
-Increment bit counter
-Stop when counter reaches DATA_WIDTH
-Typo / Syntax errors
+     * IO0 = MOSI (master drives here on write).
+     * IO1 = MISO (master samples here on read).
+   * Your code currently drives IO1 and samples IO0 → needs swapping.
 
-In quad mode branch: current_state <= finsih; is misspelled → should be finish.
-logic [3:0] temp_io = 4{1'b0}; is invalid syntax — should be {4{1'b0}}.
-'0 is valid for integers in SystemVerilog but ensure you use consistent literals (1'b0, '0, etc.).
+2. **enable\_io defaults are inconsistent**
 
+   * You set `enable_io <= 4’b0011` at the top of the SPI branch, then overwrite with `0010` or `0001`.
+   * Cleaner: decide per mode + per operation (write/read), not redundantly.
 
-2. Protocol Behavior Issues
+3. **temp\_io assignments in read mode**
 
-CPOL / CPHA Reaction
+   * In read paths, you still sometimes assign to `temp_io`. That’s unnecessary since the master isn’t driving.
+   * Cleaner: in read mode → just leave temp\_io untouched, only capture IO\[] into data\_buffer.
 
-You currently have no phase control in capturing and driving bits — CPHA determines when to sample vs. change data relative to clock edges.
-Both read and write modes will need correct edge alignment (rising vs. falling toggles/sample) per mode.
-Handling rd_data
+---
 
-You are not capturing any incoming bits into rd_data during read operations — the FSM only drives temp_io, but there’s no sampling logic to move incoming IO lines into rd_data.
-Mode handling (sel_mode)
+## 🔹 Timing & Protocol Issues
 
-You select IO assignments correctly for write mode, but you must also map IO reads differently depending on SPI / dual / quad mode.
+4. **SCLK not CPOL/CPHA aware**
 
+   * You assign `sclk = chip_select ? 1'b0 : divided_clk;` → this forces CPOL = 0 always.
+   * CPOL/CPHA parameters exist but are unused.
+   * For now that’s fine (basic working), but you’ll need to honor CPOL (idle level) and CPHA (shift/sample edge).
 
-3. Implementation / Synthesis Stability Issues
+5. **Chip-select deasserts too early**
 
-Mixing combinational and sequential behavior
+   * You deassert CS right after the last bit of a single byte.
+   * In real flash protocols, CS must stay low across the entire transaction (command + address + data).
+   * For “toy model” this is acceptable, but keep in mind for NOR flash you’ll need to restructure.
 
-Assigning chip_select high/low in multiple places inside the clocked process without defining clear cycle boundaries can cause unexpected synthesis results.
-It’s better to define CS# transitions based on state entry/exit conditions.
-Transmission completion (done_tx)
+---
 
-You declare done_tx but never set it true when transmission finishes, so there’s no handshake back to Idle except your direct current_state <= idle.
+## 🔹 Data Handling Issues
 
+6. **rd\_data not reset**
 
-4. What You’re Doing Right
+   * `rd_data` is only assigned at `finish` after a read.
+   * Before first transaction it may hold X’s in simulation.
+   * Not fatal, but initializing it avoids confusion.
 
-Good port & parameter definition — covers necessary inputs/outputs.
-Correct idea of FSM states for transaction flow.
-Proper separation of SPI/Dual/Quad cases logically in transmit phase.
-You’re considering tri-state style inout for IO, which is correct for real QSPI hardware.
+7. **DATA\_WIDTH assumptions**
 
+   * Dual mode increments `i` by 2, quad by 4.
+   * If DATA\_WIDTH isn’t divisible by 2 or 4, you’ll misalign.
+   * Either restrict DATA\_WIDTH to multiples of 2/4 or handle leftover bits.
 
-5. Summary of Issues to Solve
+---
 
-Functional / Protocol
+## 🔹 Integration / Cleanliness Issues
 
+8. **Trigger handling**
 
-Implement a bit/byte counter for sequential shifting over multiple cycles.
-Generate sclk internally per CPOL/CPHA — don’t tie directly to sys_clk.
-Implement correct drive vs. sample edges per CPHA during read/write.
-Capture input data into rd_data during reads.
-Release IO lines to high-Z when in read phase.
+   * If `trigger_transmission` stays high for more than 1 cycle, you may re-enter transmit unexpectedly.
+   * Safer: latch the trigger once, then ignore until transaction finishes.
 
-Syntax / Structural
+9. **No “valid” flag**
 
+   * You load `rd_data` at finish, but outside logic doesn’t know when it’s ready.
+   * A `rd_valid` or `done` flag would make integration easier.
 
-Fix typos (finsih → finish, {4{1'b0}} etc.).
-Stop using for loops to represent sequential transmissions inside always_ff.
-Ensure consistent literal usage (1'b0, '0).
-Establish proper CS# control on FSM transition boundaries.
+10. **Redundant reset code**
 
-Optional Enhancements
+* You clear `data_buffer` twice in reset. Minor, but could be simplified.
 
+---
 
-Add a done or busy signal for better handshake.
-Consider separately handling “protocol phase” (command, address, dummy, data) later when you move on to device-specific commands.
+## ✅ Suggested Fix Order
+
+To make it manageable, fix in this order:
+
+1. **SPI mapping** (IO0 = MOSI, IO1 = MISO).
+2. **enable\_io patterns** (drive only what’s needed per mode).
+3. **Remove temp\_io writes in read mode.**
+4. **Initialize rd\_data on reset.**
+5. **Restrict DATA\_WIDTH or handle leftovers.**
+6. **Latch trigger\_transmission.**
+7. (Optional, next phase) Add `rd_valid` / CPOL-CPHA / CS hold fixes.
+
+---
+
+👉 Do you want me to draft the **truth table for enable\_io & IO usage** across SPI/Dual/Quad + read/write, so you can implement fixes #1–#3 cleanly?

@@ -1,0 +1,90 @@
+1. Major Conceptual Issues
+
+Looping inside always_ff
+
+You are using for loops inside a single clocked always_ff block to transmit all bits in one pass.
+In synthesizable RTL, these loops don’t iterate per clock cycle — they happen in zero simulation time and do not generate sequential shifting hardware in the way you probably intend.
+For bit-by-bit transmission, you’ll need a bit counter that increments each clock cycle and sends one set of bits per SCK edge, not all at once.
+Clock handling
+
+You wrote sclk <= sys_clk; which just connects sclk to the system clock.
+In an SPI/QSPI master, sclk should be generated according to CPOL/CPHA using a divider or edge toggling logic — not directly assigned from sys_clk.
+Without proper clock generation, timing will not meet protocol requirements for the connected device.
+Tri-State handling for IO lines
+
+You have temp_io but you never actually assign IO with high-Z when needed for read operations.
+In real QSPI, during certain phases (like read data), the master must release IO lines so the slave can drive them.
+You need explicit assign IO[x] = drive_enable[x] ? temp_io[x] : 1'bz; type connectivity so the external pins behave correctly.
+State machine bit progression
+
+You never increment or track the current bit index across cycles in your FSM — instead, the for loop tries to do it all at once.
+This means temp_io will end up with only the last iteration’s values when synthesis maps it.
+A proper FSM will have:
+Load data
+Shift/send one chunk per clock
+Increment bit counter
+Stop when counter reaches DATA_WIDTH
+Typo / Syntax errors
+
+In quad mode branch: current_state <= finsih; is misspelled → should be finish.
+logic [3:0] temp_io = 4{1'b0}; is invalid syntax — should be {4{1'b0}}.
+'0 is valid for integers in SystemVerilog but ensure you use consistent literals (1'b0, '0, etc.).
+
+
+2. Protocol Behavior Issues
+
+CPOL / CPHA Reaction
+
+You currently have no phase control in capturing and driving bits — CPHA determines when to sample vs. change data relative to clock edges.
+Both read and write modes will need correct edge alignment (rising vs. falling toggles/sample) per mode.
+Handling rd_data
+
+You are not capturing any incoming bits into rd_data during read operations — the FSM only drives temp_io, but there’s no sampling logic to move incoming IO lines into rd_data.
+Mode handling (sel_mode)
+
+You select IO assignments correctly for write mode, but you must also map IO reads differently depending on SPI / dual / quad mode.
+
+
+3. Implementation / Synthesis Stability Issues
+
+Mixing combinational and sequential behavior
+
+Assigning chip_select high/low in multiple places inside the clocked process without defining clear cycle boundaries can cause unexpected synthesis results.
+It’s better to define CS# transitions based on state entry/exit conditions.
+Transmission completion (done_tx)
+
+You declare done_tx but never set it true when transmission finishes, so there’s no handshake back to Idle except your direct current_state <= idle.
+
+
+4. What You’re Doing Right
+
+Good port & parameter definition — covers necessary inputs/outputs.
+Correct idea of FSM states for transaction flow.
+Proper separation of SPI/Dual/Quad cases logically in transmit phase.
+You’re considering tri-state style inout for IO, which is correct for real QSPI hardware.
+
+
+5. Summary of Issues to Solve
+
+Functional / Protocol
+
+
+Implement a bit/byte counter for sequential shifting over multiple cycles.
+Generate sclk internally per CPOL/CPHA — don’t tie directly to sys_clk.
+Implement correct drive vs. sample edges per CPHA during read/write.
+Capture input data into rd_data during reads.
+Release IO lines to high-Z when in read phase.
+
+Syntax / Structural
+
+
+Fix typos (finsih → finish, {4{1'b0}} etc.).
+Stop using for loops to represent sequential transmissions inside always_ff.
+Ensure consistent literal usage (1'b0, '0).
+Establish proper CS# control on FSM transition boundaries.
+
+Optional Enhancements
+
+
+Add a done or busy signal for better handshake.
+Consider separately handling “protocol phase” (command, address, dummy, data) later when you move on to device-specific commands.

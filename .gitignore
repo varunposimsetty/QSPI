@@ -10,6 +10,9 @@
 ### executable files 
 *.exe 
 
+### value change dump
+*.vcd
+
 ### text files
 *.lst 
 

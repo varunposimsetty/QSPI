@@ -1,91 +1,154 @@
-Alright 👍 — let’s do a **full checklist** of the issues in your current QSPI\_Master so you can fix them one by one. I’ll keep it clear and structured:
+lright — based on your latest QSPI_Master code (Mode 0 only, continuous level-trigger, 8‑bit aligned, MSB‑first) and our previous iterations, here’s the full list of remaining issues in the context of your defined constraints.
 
----
 
-## 🔹 Functional Issues
 
-1. **Single-bit SPI mapping is flipped**
+✅ Already Resolved
 
-   * Correct convention:
+MSB-first bit order in all modes.
+CPOL honoured in assign sclk.
+transmit_count correctly reset on reset and at end of transaction in all modes.
+Lane indexing consistent across write/read.
+transaction_done set consistently in FINISH for all modes.
+Continuous “stream” mode per your requirement (no rising-edge detect).
+No out-of-bounds indexing for DATA_WIDTH=8.
 
-     * IO0 = MOSI (master drives here on write).
-     * IO1 = MISO (master samples here on read).
-   * Your code currently drives IO1 and samples IO0 → needs swapping.
 
-2. **enable\_io defaults are inconsistent**
+⚠ Remaining / Context-Specific Issues
 
-   * You set `enable_io <= 4’b0011` at the top of the SPI branch, then overwrite with `0010` or `0001`.
-   * Cleaner: decide per mode + per operation (write/read), not redundantly.
+1. Hardcoded Dual/Quad stop values
 
-3. **temp\_io assignments in read mode**
+You hardcoded:
 
-   * In read paths, you still sometimes assign to `temp_io`. That’s unnecessary since the master isn’t driving.
-   * Cleaner: in read mode → just leave temp\_io untouched, only capture IO\[] into data\_buffer.
 
----
+if (sel_mode == 2'b01 && transmit_count == 1) ...
+if (sel_mode == 2'b10 && transmit_count == 3) ...
 
-## 🔹 Timing & Protocol Issues
+This only works for:
 
-4. **SCLK not CPOL/CPHA aware**
 
-   * You assign `sclk = chip_select ? 1'b0 : divided_clk;` → this forces CPOL = 0 always.
-   * CPOL/CPHA parameters exist but are unused.
-   * For now that’s fine (basic working), but you’ll need to honor CPOL (idle level) and CPHA (shift/sample edge).
+DATA_WIDTH divisible evenly by lane width.
+Exactly one byte per transaction.
 
-5. **Chip-select deasserts too early**
+It’s fine for your case (N25Q032A, 8‑bit aligned), but dangerous if:
 
-   * You deassert CS right after the last bit of a single byte.
-   * In real flash protocols, CS must stay low across the entire transaction (command + address + data).
-   * For “toy model” this is acceptable, but keep in mind for NOR flash you’ll need to restructure.
 
----
+You later implement multi-byte burst per trigger.
+You change DATA_WIDTH.
 
-## 🔹 Data Handling Issues
+Risk: Silent truncation or extra cycles if you change lengths later.
 
-6. **rd\_data not reset**
 
-   * `rd_data` is only assigned at `finish` after a read.
-   * Before first transaction it may hold X’s in simulation.
-   * Not fatal, but initializing it avoids confusion.
 
-7. **DATA\_WIDTH assumptions**
+2. Counter width still int
 
-   * Dual mode increments `i` by 2, quad by 4.
-   * If DATA\_WIDTH isn’t divisible by 2 or 4, you’ll misalign.
-   * Either restrict DATA\_WIDTH to multiples of 2/4 or handle leftover bits.
+int is 32‑bit signed — fine for simulation, but overkill for synthesis.
+Most FPGA tools will optimise it away, but good style is:
 
----
 
-## 🔹 Integration / Cleanliness Issues
+logic [
+c
+l
+o
+g
+2
+(
+D
+A
+T
+A
+W
+I
+D
+T
+H
+)
+:
+0
+]
+t
+r
+a
+n
+s
+m
+i
+t
+c
+o
+u
+n
+t
+;
+l
+o
+g
+i
+c
+[
+clog2(CLOCK_DIVIDER):0] clk_count;
 
-8. **Trigger handling**
+This prevents mismatches if you parameterise DATA_WIDTH later.
 
-   * If `trigger_transmission` stays high for more than 1 cycle, you may re-enter transmit unexpectedly.
-   * Safer: latch the trigger once, then ignore until transaction finishes.
 
-9. **No “valid” flag**
 
-   * You load `rd_data` at finish, but outside logic doesn’t know when it’s ready.
-   * A `rd_valid` or `done` flag would make integration easier.
+3. CPHA parameter unused
 
-10. **Redundant reset code**
+You list CPHA but ignore it entirely. This is okay for Mode 0, but:
 
-* You clear `data_buffer` twice in reset. Minor, but could be simplified.
 
----
+If you ever accidentally set CPHA != 0, behaviour will be wrong.
+If CPHA is fixed, remove it from the port list to avoid misleading other users of the module.
 
-## ✅ Suggested Fix Order
 
-To make it manageable, fix in this order:
+4. Simultaneous Reset and Continuous Mode edge case
 
-1. **SPI mapping** (IO0 = MOSI, IO1 = MISO).
-2. **enable\_io patterns** (drive only what’s needed per mode).
-3. **Remove temp\_io writes in read mode.**
-4. **Initialize rd\_data on reset.**
-5. **Restrict DATA\_WIDTH or handle leftovers.**
-6. **Latch trigger\_transmission.**
-7. (Optional, next phase) Add `rd_valid` / CPOL-CPHA / CS hold fixes.
+You reset transmit_count and data_buffer on reset and re‑init them in TRANSMISSION stop branches, but:
 
----
 
-👉 Do you want me to draft the **truth table for enable\_io & IO usage** across SPI/Dual/Quad + read/write, so you can implement fixes #1–#3 cleanly?
+If asynchronous reset happens during TRANSMISSION, CS will go high immediately and release the bus without finishing data (normal for reset).
+In continuous level‑trigger mode, as soon as reset deasserts, FSM will restart if trigger is still high — may restart mid‑byte pattern.
+This is only a problem if your higher-level code doesn’t guarantee reset masks trigger.
+
+
+5. Bus direction management
+
+Your read blocks set:
+
+
+enable_io <= 4'b0010; // or 0000, or {4{1'b0}}
+
+This tri-states output lanes during reads — correct — but remember:
+
+
+In real hardware, turnaround cycles might be required when switching direction (especially in Quad/Dual).
+If you expand to real flash protocol, you’ll need a turnaround phase between last write cycle and first read cycle.
+
+
+6. High‑Z and uninitialised IO behaviour at sim start
+
+At sim time 0, enable_io is 0 from reset logic — that’s good — but in some tools, IO nets can show X’s if uninitialised slaves drive them in testbench.
+
+
+
+🧾 Summary Table
+
+Issue	Impact (for your constraints)	Fix Priority
+Hardcoded Dual/Quad stop counts	Fine now, brittle if expand	Low
+int counter widths	No functional bug	Low
+CPHA unused	No functional bug now	Low
+Reset + continuous mode restart early	Only in async reset mid-txn	Low
+Missing turnaround cycles	Only in real device protocol	Future
+High‑Z startup conditions	Only sim output aesthetics	Info
+
+
+🚀 Bottom line for your defined N25Q032A scope:
+
+For Mode 0, 8‑bit aligned, single‑byte per transfer, continuous mode, you don’t have functional issues now.
+Remaining points are either style/robustness or future‑proofing if you expand to bursts, multiple bytes per trigger, or additional modes.
+
+
+
+If you like, I can extend your FSM to support multi-byte bursts with the same continuous trigger behaviour — that would eliminate the hardcoded stop numbers (1 and 3) and make this design burst‑length agnostic without breaking current operation.  
+
+
+Do you want me to prepare that upgraded FSM plan?

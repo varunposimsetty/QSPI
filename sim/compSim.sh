@@ -3,14 +3,14 @@
 WORK_DIR=work
 WAVE_FILE=result.vcd
 GTKPROJ_FILE=result.gtkw
-TOP_MODULE=tb_AXI_STREAM_SLAVE_INTERFACE
+TOP_MODULE=tb_QSPI_Master
 
 # Create work dir if it does not exist
 mkdir -p $WORK_DIR
 
 # Compile source files 
-vlog -work $WORK_DIR ../src/qspi_design.sv
-vlog -work $WORK_DIR ./tb_qspi_design.sv
+vlog -work $WORK_DIR ../src/QSPI_Master.sv
+vlog -work $WORK_DIR ./tb_QSPI_Master.sv
 
 # Simulate using the TOP_MODULE variable
 vsim -c work.$TOP_MODULE -do "run -all; quit" -voptargs=+acc

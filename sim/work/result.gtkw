@@ -1,0 +1,70 @@
+[*]
+[*] GTKWave Analyzer v3.3.118 (w)1999-2023 BSI
+[*] Thu Oct 02 14:39:47 2025
+[*]
+[dumpfile] "C:\Users\Posimsetty\Desktop\QSPI\sim\work\result.vcd"
+[dumpfile_mtime] "Thu Oct 02 14:38:54 2025"
+[dumpfile_size] 21800
+[savefile] "C:\Users\Posimsetty\Desktop\QSPI\sim\work\result.gtkw"
+[timestart] 0
+[size] 2560 1369
+[pos] 2551 -9
+*-7.000000 715 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1
+[treeopen] $DUP0.
+[treeopen] $DUP0.tb_QSPI_Master.
+[treeopen] tb_QSPI_Master.
+[sst_width] 174
+[signals_width] 287
+[sst_expanded] 1
+[sst_vpaned_height] 427
+@200
+-Inputs
+@28
+tb_QSPI_Master.dut.sys_clk
+tb_QSPI_Master.dut.nrst
+#{tb_QSPI_Master.dut.sel_mode[1:0]} tb_QSPI_Master.dut.sel_mode[1] tb_QSPI_Master.dut.sel_mode[0]
+tb_QSPI_Master.dut.operation
+tb_QSPI_Master.dut.trigger_transmission
+@22
+#{tb_QSPI_Master.dut.wr_data[7:0]} tb_QSPI_Master.dut.wr_data[7] tb_QSPI_Master.dut.wr_data[6] tb_QSPI_Master.dut.wr_data[5] tb_QSPI_Master.dut.wr_data[4] tb_QSPI_Master.dut.wr_data[3] tb_QSPI_Master.dut.wr_data[2] tb_QSPI_Master.dut.wr_data[1] tb_QSPI_Master.dut.wr_data[0]
+@200
+-
+-
+@28
+tb_QSPI_Master.dut.operation_sync
+tb_QSPI_Master.dut.sel_mode_sync[1:0]
+@22
+tb_QSPI_Master.dut.data_buffer[7:0]
+@28
+tb_QSPI_Master.dut.current_state[1:0]
+tb_QSPI_Master.dut.chip_select
+tb_QSPI_Master.dut.sclk
+@421
+tb_QSPI_Master.dut.transmit_count
+@800022
+tb_QSPI_Master.dut.io_int[3:0]
+@28
+(0)tb_QSPI_Master.dut.io_int[3:0]
+(1)tb_QSPI_Master.dut.io_int[3:0]
+(2)tb_QSPI_Master.dut.io_int[3:0]
+(3)tb_QSPI_Master.dut.io_int[3:0]
+@1001200
+-group_end
+@200
+-
+-
+-
+@800028
+#{tb_QSPI_Master.dut.IO[3:0]} tb_QSPI_Master.dut.IO[3] tb_QSPI_Master.dut.IO[2] tb_QSPI_Master.dut.IO[1] tb_QSPI_Master.dut.IO[0]
+@28
+tb_QSPI_Master.dut.IO[3]
+tb_QSPI_Master.dut.IO[2]
+tb_QSPI_Master.dut.IO[1]
+tb_QSPI_Master.dut.IO[0]
+@22
+tb_QSPI_Master.dut.data_buffer[7:0]
+tb_QSPI_Master.dut.rd_data[7:0]
+@1001200
+-group_end
+[pattern_trace] 1
+[pattern_trace] 0

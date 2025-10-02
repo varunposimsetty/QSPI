@@ -3,6 +3,7 @@
 
 ### simulation outputs
 *.ghw
+*.wlf
 
 ### object files 
 *.o 
@@ -18,3 +19,4 @@
 
 ### macOS metadata files
 *.DS_Store
+

@@ -1,4 +1,3 @@
-
 `timescale 1ns/1ns
 
 module tb_QSPI_Master;
@@ -45,22 +44,21 @@ module tb_QSPI_Master;
     initial sys_clk = 0;
     always #(CLK_PERIOD/2) sys_clk = ~sys_clk;
 
-    // Simple slave behaviour for read mode
-    // For each mode, load IO_drv with the bits to send MSB-first when chip_select is low
+    // Slave behaviour for read mode: shift out MSB-first pattern
     logic [DATA_WIDTH-1:0] slave_shift;
     always @(negedge sclk) begin
-        if (!chip_select && !operation) begin
+        if (!chip_select && operation == 0) begin // Only during reads
             case (sel_mode)
-                2'b00: begin
+                2'b00: begin // SPI - only IO1 as MISO
                     IO_drv[1] <= slave_shift[DATA_WIDTH-1];
                     slave_shift <= {slave_shift[DATA_WIDTH-2:0], 1'b0};
                 end
-                2'b01: begin
+                2'b01: begin // Dual - IO0/IO1 together
                     IO_drv[0] <= slave_shift[DATA_WIDTH-1];
                     IO_drv[1] <= slave_shift[DATA_WIDTH-2];
                     slave_shift <= {slave_shift[DATA_WIDTH-3:0], 2'b00};
                 end
-                2'b10: begin
+                2'b10: begin // Quad - IO0..IO3 together
                     IO_drv[0] <= slave_shift[DATA_WIDTH-1];
                     IO_drv[1] <= slave_shift[DATA_WIDTH-2];
                     IO_drv[2] <= slave_shift[DATA_WIDTH-3];
@@ -73,8 +71,9 @@ module tb_QSPI_Master;
 
     // Test sequence
     initial begin
+        // Enable waveform dump for GTKWave
         $dumpfile("./work/result.vcd");
-        $dumpvars(0,tb_QSPI_Master);
+        $dumpvars(0, tb_QSPI_Master);
         // Initial values
         nrst = 0;
         sel_mode = 2'b00;
@@ -85,40 +84,54 @@ module tb_QSPI_Master;
         IO_drv = 4'b0000;
         slave_shift = 0;
 
-        // Reset DUT
+        // Apply reset
         #(CLK_PERIOD*5);
         nrst = 1;
 
-        // ----------------------
-        // Loop through all modes
-        // ----------------------
-        repeat (3) begin : mode_loop
-            // WRITE
-            operation = 1; // write mode
-            wr_data = 8'hA5; // sample pattern
-            trigger_transmission = 1;
-            wait (dut.current_state == dut.FINISH);
-            trigger_transmission = 0;
-            #(CLK_PERIOD*5);
-
-            // READ
-            operation = 0; // read mode
+        //----------------------
+        // Phase 1: READS for all sel_modes
+        //----------------------
+        operation = 0; // Read mode
+        sel_mode = 2'b00;
+        repeat (3) begin
+            // Prepare slave and enable IO drive
             case (sel_mode)
-                2'b00: begin IO_drive_en = 4'b0010; slave_shift = 8'h3C; end
-                2'b01: begin IO_drive_en = 4'b0011; slave_shift = 8'h5A; end
-                2'b10: begin IO_drive_en = 4'b1111; slave_shift = 8'hC3; end
+                2'b00: begin IO_drive_en = 4'b0010; slave_shift = 8'hFF; end
+                2'b01: begin IO_drive_en = 4'b0011; slave_shift = 8'hFF; end
+                2'b10: begin IO_drive_en = 4'b1111; slave_shift = 8'hFF; end
             endcase
+
             trigger_transmission = 1;
             wait (dut.current_state == dut.FINISH);
-            trigger_transmission = 0;
-            IO_drive_en = 4'b0000;
-            #(CLK_PERIOD*5);
+            $display($stime,sel_mode,rd_data);
+            #(CLK_PERIOD*10); // Hold IO drive a bit after FINISH
+            IO_drive_en = 4'b0000; // Release bus
 
-            // Next mode
+            trigger_transmission = 0;
             sel_mode = sel_mode + 1;
         end
 
-        // End simulation
+        //----------------------
+        // Phase 2: WRITES for all sel_modes
+        //----------------------
+        operation = 1; // Write mode
+        sel_mode = 2'b00;
+        repeat (3) begin
+            // Prepare write data for each mode
+            case (sel_mode)
+                2'b00: wr_data = 8'hA5;
+                2'b01: wr_data = 8'h5A;
+                2'b10: wr_data = 8'hF0;
+            endcase
+
+            trigger_transmission = 1;
+            wait (dut.current_state == dut.FINISH);
+            $display($stime,sel_mode,wr_data);
+            #(CLK_PERIOD*10);
+            trigger_transmission = 0;
+            sel_mode = sel_mode + 1;
+        end
+
         $stop;
     end
 

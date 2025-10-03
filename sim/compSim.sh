@@ -12,13 +12,7 @@ vlog -sv -work $WORK_DIR ../src/QSPI_Master.sv
 vlog -sv -work $WORK_DIR ./tb_QSPI_Master.sv
 
 echo "Running simulation, generating $WORK_DIR/$WAVE_FILE..."
-vsim -c work.$TOP_MODULE \
-    -do "log -r /*;
-         vcd file $WORK_DIR/$WAVE_FILE;
-         vcd add -r /*;
-         run -all;
-         quit" \
-    -voptargs=+acc
+vsim -c work.$TOP_MODULE -do "run 2 us; quit" -voptargs=+acc
 
 echo "Launching GTKWave..."
 if [ -f "$WORK_DIR/$GTKPROJ_FILE" ]; then
@@ -31,4 +25,5 @@ fi
 # Cleanup unnecessary files
 echo "Cleaning up unnecessary files..."
 rm -f "$WORK_DIR"/_info "$WORK_DIR"/*.qdb "$WORK_DIR"/*.qpg "$WORK_DIR"/*.qtl "$WORK_DIR"/_vmake  transcript
+rm -f wl*
 echo "Cleanup completed."

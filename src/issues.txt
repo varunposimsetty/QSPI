@@ -1,154 +1,150 @@
-lright — based on your latest QSPI_Master code (Mode 0 only, continuous level-trigger, 8‑bit aligned, MSB‑first) and our previous iterations, here’s the full list of remaining issues in the context of your defined constraints.
+Awesome—thanks for sharing the latest version. You’re very close to a clean, minimal QSPI shifter. Below is a complete, **fix-me list** with what’s truly blocking vs. what’s just robustness/future-proofing. I’ll stay high level (no code), but detailed enough that you can patch each item confidently.
 
+---
 
+# What’s already good
 
-✅ Already Resolved
+* Mode-0 timing intent (write on falling edge, read on rising edge).
+* MOSI/MISO mapping: IO0 = MOSI (drive on writes), IO1 = MISO (sample on reads).
+* `sclk` gating with `chip_select` (idles at CPOL, runs only when CS low).
+* Freezing `operation`/`sel_mode` at transaction start (`*_sync` regs).
+* Byte-aligned transfer with lane-aware stop conditions (0 / 1 / 3) for 1/2/4 lanes.
 
-MSB-first bit order in all modes.
-CPOL honoured in assign sclk.
-transmit_count correctly reset on reset and at end of transaction in all modes.
-Lane indexing consistent across write/read.
-transaction_done set consistently in FINISH for all modes.
-Continuous “stream” mode per your requirement (no rising-edge detect).
-No out-of-bounds indexing for DATA_WIDTH=8.
+---
 
+# 🔴 Critical must-fix (functional / synthesis blockers)
 
-⚠ Remaining / Context-Specific Issues
+## 1) **Multiple drivers to the same regs across different clocked blocks**
 
-1. Hardcoded Dual/Quad stop values
+* **What:** `enable_io` and `io_int` are assigned in **both** the write (negedge sclk) and read (posedge sclk) processes. Also, `data_buffer` gets written in the control block **and** in the read block (bit-wise).
+* **Why it’s bad:** In SystemVerilog, a variable driven by `always_ff` must have exactly one procedural driver. Multiple clock domains driving the same reg is **unsynthesizable** and often a sim hazard.
+* **Fix direction:** Give **one owner** to each reg:
 
-You hardcoded:
+  * One block should control `enable_io` for the entire transaction (e.g., set outputs enabled for writes, disabled for reads) and no other block touches it.
+  * One block should own `io_int` (typically the write shifter only).
+  * One block should own `data_buffer` (typically the read shifter OR the control block—but not both). If you keep bit-wise captures in the read shifter, then the control block should **not** also assign to `data_buffer` except at transaction start/end (use a separate “next” capture buffer if you want to be extra clean).
 
+## 2) **Reset edge mismatch in the READ block**
 
-if (sel_mode == 2'b01 && transmit_count == 1) ...
-if (sel_mode == 2'b10 && transmit_count == 3) ...
+* **What:** The read process is sensitive to **posedge** of reset but tests `if (~nrst)`. That condition will never be true in that block.
+* **Why it’s bad:** That block won’t actually reset; stale values can persist.
+* **Fix direction:** Make the reset polarity and edge **consistent across all always_ff blocks**. Use the same reset edge/polarity everywhere, and test it consistently inside the if/else.
 
-This only works for:
+## 3) **Tri-state control during reads can remain ACTIVE from the last write**
 
+* **What:** In read mode, you commented out the `enable_io` deassertion lines, so `enable_io` may retain the previous write’s drive pattern.
+* **Why it’s bad:** You’ll drive the bus while the “flash/slave” also drives → **contention**.
+* **Fix direction:** Ensure **before** any read shifting starts, `enable_io` is cleared (master not driving). Only one block should set/clear it (see #1). Verify in waves that IO0..IO3 from the master are Z during reads.
 
-DATA_WIDTH divisible evenly by lane width.
-Exactly one byte per transaction.
+## 4) **Race/phase alignment of `transmit_count` vs. sample/drive edges**
 
-It’s fine for your case (N25Q032A, 8‑bit aligned), but dangerous if:
+* **What:** `transmit_count` is updated on **posedge** of divided clock; write driving occurs on **negedge** of SCLK; read sampling on **posedge** of SCLK. Because posedge-update and posedge-sample happen at the **same edge**, read capture and counter update race. Also, the very first write edge can start one bit late due to a pre-decrement.
+* **Why it’s bad:** Off-by-one errors and non-determinism between blocks on the same edge (simulators don’t guarantee order between always blocks).
+* **Fix direction:** Align phases so the **counter updates on the opposite half-cycle** from the edge where you drive/sample:
 
+  * For Mode-0: drive on falling edge, **decrement after that** (or sample on rising, then decrement; pick one consistent scheme).
+  * The key is: “present bit → sample bit → then decrement index” (not the other way around).
 
-You later implement multi-byte burst per trigger.
-You change DATA_WIDTH.
+## 5) **Sensitivity list syntax in one block**
 
-Risk: Silent truncation or extra cycles if you change lengths later.
+* **What:** One block uses `always_ff @(posedge sys_clk, negedge nrst)` with a comma in the list.
+* **Why it’s bad:** Standard SV uses `or` in event lists. Some tools will reject the comma form for `always_ff`.
+* **Fix direction:** Use the standard event list form consistently in all always_ff blocks.
 
+---
 
+# 🟠 Strongly recommended (robustness / correctness under stress)
 
-2. Counter width still int
+## 6) **Synchronize `trigger_transmission` into the divided_clk domain**
 
-int is 32‑bit signed — fine for simulation, but overkill for synthesis.
-Most FPGA tools will optimise it away, but good style is:
+* **What:** `trigger_transmission` likely originates in sys_clk domain but is consumed in the divided_clk domain.
+* **Why it matters:** Even though divided_clk is derived from sys_clk, phase relationship isn’t guaranteed. You can hit metastability or multiple-cycle ambiguity.
+* **Fix direction:** Add a simple synchronizer/edge detect into the divided clock domain, or require the upstream to present a clean pulse aligned to divided_clk. Your `transaction_done` gating helps, but proper sync removes flakiness.
 
+## 7) **`chip_select` drop timing vs. last sample/drive**
 
-logic [
-c
-l
-o
-g
-2
-(
-D
-A
-T
-A
-W
-I
-D
-T
-H
-)
-:
-0
-]
-t
-r
-a
-n
-s
-m
-i
-t
-c
-o
-u
-n
-t
-;
-l
-o
-g
-i
-c
-[
-clog2(CLOCK_DIVIDER):0] clk_count;
+* **What:** You deassert CS in the same cycle the counter reaches the stop condition.
+* **Why it matters:** Since `sclk` is gated by `chip_select`, dropping CS exactly at the stop condition can cut off a half-cycle or create ambiguity on the last sample/drive event.
+* **Fix direction:** Ensure you only raise CS **after** the final required edge has occurred (i.e., don’t truncate the final rising or falling edge that contains the last data/sample). A one-half-cycle/order guarantee is enough.
 
-This prevents mismatches if you parameterise DATA_WIDTH later.
+## 8) **Guard against invalid `sel_mode` (2’b11)**
 
+* **What:** No default path for 2’b11.
+* **Why it matters:** Defensive coding avoids “sticky” last-value bugs if an invalid mode slips through.
+* **Fix direction:** Define a safe behavior (e.g., treat as single mode or ignore trigger) if an invalid mode is latched.
 
+## 9) **Initialize all externally visible outputs on reset**
 
-3. CPHA parameter unused
+* **What:** `rd_data` isn’t explicitly cleared in your reset path.
+* **Why it matters:** Simulation Xs and confusing first-read visibility.
+* **Fix direction:** Clear `rd_data` (and any “valid” flag, if you add one) on reset.
 
-You list CPHA but ignore it entirely. This is okay for Mode 0, but:
+## 10) **Clock divider duty and odd divisors**
 
+* **What:** You toggle `divided_clk` when the count hits `CLOCK_DIVIDER-1`. Duty is 50% only if `CLOCK_DIVIDER` is constant and you start from zero. It’s fine now, but watch edge alignment if you later change it.
+* **Fix direction:** Just be aware; your present divider is OK for now.
 
-If you ever accidentally set CPHA != 0, behaviour will be wrong.
-If CPHA is fixed, remove it from the port list to avoid misleading other users of the module.
+## 11) **Make ownership explicit for direction control**
 
+* **What:** Direction switching (write→read) sometimes needs a “turnaround” or dummy in real flash protocols.
+* **Why it matters:** For your current shifter it’s OK, but once you talk to real NOR, you’ll need a turnaround phase.
+* **Fix direction:** Plan a tiny FSM step between write phase and read phase (even if it’s just holding Z for N dummy cycles).
 
-4. Simultaneous Reset and Continuous Mode edge case
+---
 
-You reset transmit_count and data_buffer on reset and re‑init them in TRANSMISSION stop branches, but:
+# 🟡 Future-proof / style
 
+## 12) **Counter widths (`int`)**
 
-If asynchronous reset happens during TRANSMISSION, CS will go high immediately and release the bus without finishing data (normal for reset).
-In continuous level‑trigger mode, as soon as reset deasserts, FSM will restart if trigger is still high — may restart mid‑byte pattern.
-This is only a problem if your higher-level code doesn’t guarantee reset masks trigger.
+* **What:** `int` for `clk_count`/`transmit_count`.
+* **Why:** Works in sim; synthesis will typically infer big flip-flops.
+* **Fix direction:** When you care about resources, size them precisely (clog2 for dividers and width).
 
+## 13) **CPHA/ADDR_WIDTH/DUMMY_CYCLES parameters unused**
 
-5. Bus direction management
+* **What:** They’re listed but not applied.
+* **Why:** Not wrong, just confusing to readers.
+* **Fix direction:** Either wire them in later (CPHA edge alignment; address/dummy FSM stages) or drop until you implement flash opcodes.
 
-Your read blocks set:
+## 14) **One-pulse vs. level trigger**
 
+* **What:** You gate with `transaction_done`, so a stuck-high trigger will immediately start the next transaction when you return to IDLE.
+* **Why:** Intentional if you want continuous mode; otherwise you may prefer a pulse requirement.
+* **Fix direction:** Decide your handshake contract and document it.
 
-enable_io <= 4'b0010; // or 0000, or {4{1'b0}}
+---
 
-This tri-states output lanes during reads — correct — but remember:
+# Quick self-tests to confirm fixes (no code, just what to look for)
 
+1. **Contention check:** In READ transactions, confirm **all** master IO drivers are Z the whole time (IO0..IO3 tri-stated). If you ever see master-driven and slave-driven at once → fix `enable_io` ownership (Issue #1/#3).
 
-In real hardware, turnaround cycles might be required when switching direction (especially in Quad/Dual).
-If you expand to real flash protocol, you’ll need a turnaround phase between last write cycle and first read cycle.
+2. **Bit-order & off-by-one:** For Mode-0, watch one byte:
 
+   * On **negedge** SCLK: MOSI must present the **current** bit (starting with MSB).
+   * On **posedge** SCLK: MISO must be sampled into the **current** bit slot; **then** decrement the counter. If you see the first bit missing or duplicated, fix the counter phase (Issue #4).
 
-6. High‑Z and uninitialised IO behaviour at sim start
+3. **Final edge preserved:** On the last bit, confirm:
 
-At sim time 0, enable_io is 0 from reset logic — that’s good — but in some tools, IO nets can show X’s if uninitialised slaves drive them in testbench.
+   * You still get the required sample/drive edge,
+   * **then** CS rises and SCLK idles. If not, adjust CS timing (Issue #7).
 
+4. **Reset consistency:** Assert/deassert reset mid-transaction in sim:
 
+   * All state/outputs go to reset immediately,
+   * After deassertion, the block doesn’t spontaneously restart unless trigger is (intentionally) held high. If it does, confirm your trigger policy (Issue #6/#14).
 
-🧾 Summary Table
+5. **Mode=11 safety:** Force `sel_mode=2’b11` in TB once, verify the DUT does something safe (Issue #8).
 
-Issue	Impact (for your constraints)	Fix Priority
-Hardcoded Dual/Quad stop counts	Fine now, brittle if expand	Low
-int counter widths	No functional bug	Low
-CPHA unused	No functional bug now	Low
-Reset + continuous mode restart early	Only in async reset mid-txn	Low
-Missing turnaround cycles	Only in real device protocol	Future
-High‑Z startup conditions	Only sim output aesthetics	Info
+---
 
+## Minimal plan to patch in order
 
-🚀 Bottom line for your defined N25Q032A scope:
+1. Pick single ownership for `enable_io`, `io_int`, `data_buffer`.
+2. Make reset edge/polarity consistent in **all** always_ff blocks.
+3. Align `transmit_count` update to the opposite half-cycle of the bit action (no off-by-one).
+4. Ensure master IO are Z during reads (no contention).
+5. Adjust CS drop to occur **after** the last required edge.
+6. (Optional now) sync `trigger_transmission` into divided_clk domain.
+7. Reset `rd_data` and add invalid-mode guard.
 
-For Mode 0, 8‑bit aligned, single‑byte per transfer, continuous mode, you don’t have functional issues now.
-Remaining points are either style/robustness or future‑proofing if you expand to bursts, multiple bytes per trigger, or additional modes.
-
-
-
-If you like, I can extend your FSM to support multi-byte bursts with the same continuous trigger behaviour — that would eliminate the hardcoded stop numbers (1 and 3) and make this design burst‑length agnostic without breaking current operation.  
-
-
-Do you want me to prepare that upgraded FSM plan?
+Do these and your current design will be solid for byte-aligned Mode-0 SPI/Dual/Quad transfers, and you’ll be ready to bolt on command/address/dummy phases for a real QSPI flash next.

@@ -1,15 +1,15 @@
 [*]
 [*] GTKWave Analyzer v3.3.118 (w)1999-2023 BSI
-[*] Fri Oct 03 11:35:58 2025
+[*] Mon Oct 06 09:00:15 2025
 [*]
 [dumpfile] "C:\Users\Posimsetty\Desktop\QSPI\sim\work\result.vcd"
-[dumpfile_mtime] "Fri Oct 03 11:35:38 2025"
-[dumpfile_size] 11549
+[dumpfile_mtime] "Mon Oct 06 08:58:01 2025"
+[dumpfile_size] 12603
 [savefile] "C:\Users\Posimsetty\Desktop\QSPI\sim\work\result.gtkw"
 [timestart] 0
 [size] 2560 1369
-[pos] -1 -1
-*-7.000000 386 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1
+[pos] 2551 -9
+*-8.000000 1292 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1
 [treeopen] tb_QSPI_Master.
 [sst_width] 174
 [signals_width] 287
@@ -19,7 +19,6 @@
 -Inputs
 @420
 tb_QSPI_Master.dut.CPOL
-@421
 tb_QSPI_Master.dut.CPHA
 @28
 tb_QSPI_Master.dut.sys_clk
@@ -44,6 +43,8 @@ tb_QSPI_Master.dut.chip_select
 tb_QSPI_Master.dut.sclk
 @420
 tb_QSPI_Master.dut.transmit_count
+@23
+tb_QSPI_Master.dut.enable_io[3:0]
 @800022
 tb_QSPI_Master.dut.io_int[3:0]
 @28

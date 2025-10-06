@@ -26,6 +26,7 @@ int clk_count;
 logic divided_clk;
 //CONTROL SIGNALS 
 int transmit_count;
+logic cpol_sync, cpha_sync;
 typedef enum logic [1:0] { IDLE, TRANSMISSION, FINISH} state_t;
 state_t current_state;
 logic transaction_done;
@@ -62,9 +63,13 @@ always_ff @(posedge divided_clk or negedge nrst) begin
         rd_data <= 0;
         operation_sync <= 0;
         sel_mode_sync <= 0;
+        cpol_sync <= 0;
+        cpha_sync <= 0;
     end else begin 
         if(current_state == IDLE) begin 
            if(trigger_transmission && transaction_done) begin 
+                cpha_sync <= CPHA;
+                cpol_sync <= CPOL;
                 transaction_done <= 0;
                 operation_sync <= operation;
                 sel_mode_sync <= sel_mode;
@@ -121,9 +126,11 @@ always_ff @(posedge divided_clk or negedge nrst) begin
     end 
 end 
 
+
+
 // WRITE OPERATION
 always_ff @(negedge sclk or negedge nrst) begin 
-    if(CPHA == 0) begin 
+    if((cpha_sync == 0 && cpol_sync == 0 ) || (cpha_sync == 1 && cpol_sync == 1) ) begin 
         if(~nrst) begin         
             io_int <= 0;
         end else begin 
@@ -144,8 +151,10 @@ always_ff @(negedge sclk or negedge nrst) begin
     end
 end
 
+
+
 always_ff @(posedge sclk or negedge nrst) begin 
-    if(CPHA == 1) begin 
+    if((cpha_sync == 1 && cpol_sync == 0 ) || (cpha_sync == 0 && cpol_sync == 1) ) begin 
         if(~nrst) begin         
             io_int <= 0;
         end else begin 
@@ -168,7 +177,7 @@ end
 
 // READ OPERATION
 always_ff @(posedge sclk or negedge nrst) begin 
-    if(CPHA == 0) begin 
+    if((cpha_sync == 0 && cpol_sync == 0 ) || (cpha_sync == 1 && cpol_sync == 1) ) begin 
         if(~nrst) begin 
             read_data_buffer <= 0;
         end else begin 
@@ -190,7 +199,7 @@ always_ff @(posedge sclk or negedge nrst) begin
 end
 
 always_ff @(negedge sclk or negedge nrst) begin 
-    if(CPHA == 1) begin 
+    if((cpha_sync == 1 && cpol_sync == 0 ) || (cpha_sync == 0 && cpol_sync == 1) ) begin 
         if(~nrst) begin 
             read_data_buffer <= 0;
         end else begin 
@@ -211,7 +220,7 @@ always_ff @(negedge sclk or negedge nrst) begin
     end 
 end
 
-assign sclk = chip_select ? CPOL : (CPOL ? ~divided_clk : divided_clk);
+assign sclk = chip_select ? cpol_sync : (cpol_sync ? ~divided_clk : divided_clk);
 assign IO[0] = enable_io[0] ? io_int[0] : 1'bz;
 assign IO[1] = enable_io[1] ? io_int[1] : 1'bz;
 assign IO[2] = enable_io[2] ? io_int[2] : 1'bz;

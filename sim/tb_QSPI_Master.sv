@@ -27,7 +27,7 @@ module tb_QSPI_Master;
     assign IO[3] = IO_drive_en[3] ? IO_drv[3] : 1'bz;
 
    
-    QSPI_Master #(.DATA_WIDTH(DATA_WIDTH), .CPOL(1), .CPHA(0)) dut (
+    QSPI_Master #(.DATA_WIDTH(DATA_WIDTH), .CPOL(0), .CPHA(0)) dut (
         .sys_clk(sys_clk),
         .nrst(nrst),
         .sel_mode(sel_mode),
